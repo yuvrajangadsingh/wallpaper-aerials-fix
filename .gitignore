@@ -8,3 +8,7 @@ CMakeCache.txt
 # Editor
 .vscode/
 .idea/
+
+# Release artifacts
+dist/
+*.zip
