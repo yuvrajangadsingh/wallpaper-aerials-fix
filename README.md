@@ -17,7 +17,33 @@ Keywords: macOS, wallpaper, Aerials, screensaver, dynamic wallpaper, Tahoe, Sequ
 - A brief wallpaper reset/flash can happen. This is inherent to stopping the extension process.
 - This is an unofficial workaround. Apple may change process names/behavior anytime.
 
+## Install (recommended)
+
+Download the latest universal macOS binary from GitHub Releases:
+https://github.com/yuvrajangadsingh/wallpaper-aerials-fix/releases
+
+```bash
+curl -L -o wallpaper-aerials-fix-macos-universal.zip \
+  https://github.com/yuvrajangadsingh/wallpaper-aerials-fix/releases/latest/download/wallpaper-aerials-fix-macos-universal.zip
+unzip wallpaper-aerials-fix-macos-universal.zip
+chmod +x wallpaper-aerials-fix
+# If macOS blocks it, remove quarantine attribute:
+xattr -dr com.apple.quarantine wallpaper-aerials-fix 2>/dev/null || true
+./wallpaper-aerials-fix --verbose
+```
+
 ## Build
+
+### Option 1: Build with clang++ (no CMake)
+
+```bash
+mkdir -p build
+clang++ -O2 -std=c++17 -arch arm64 -arch x86_64 src/main.cpp \
+  -framework CoreFoundation -framework CoreServices -framework ApplicationServices \
+  -o build/wallpaper-aerials-fix
+```
+
+### Option 2: Build with CMake
 
 ```bash
 mkdir -p build
