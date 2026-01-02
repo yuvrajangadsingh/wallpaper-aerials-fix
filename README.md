@@ -4,6 +4,9 @@ A tiny macOS (Sonoma / Sequoia / Tahoe) utility that restarts the Aerials wallpa
 
 This is useful when Aerial wallpapers get stuck/stop animating on newer macOS versions.
 
+If you are using a static wallpaper (no Live Wallpaper / Aerials), this tool will likely do nothing.
+
+
 Keywords: macOS, wallpaper, Aerials, screensaver, dynamic wallpaper, Tahoe, Sequoia, Sonoma, WallpaperAerialsExtension.
 
 ## What it does
