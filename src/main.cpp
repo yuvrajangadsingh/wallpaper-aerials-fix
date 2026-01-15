@@ -146,26 +146,58 @@ void system_event_callback(CFNotificationCenterRef /*center*/, void *observer, C
     }
 
     if (cfg->wait_for_displays) {
-        // Set pending kill flag - display callback or timeout will trigger the actual kill
-        g_pending_kill = true;
-        if (cfg->verbose) {
-            std::cerr << "Waiting for external displays to enable (timeout: " << cfg->display_timeout_ms << "ms)...\n";
+        // Check if external displays are already online - if so, just use a short delay
+        uint32_t display_count = 0;
+        CGGetActiveDisplayList(0, nullptr, &display_count);
+        bool has_external = false;
+        if (display_count > 1) {
+            std::vector<CGDirectDisplayID> displays(display_count);
+            CGGetActiveDisplayList(display_count, displays.data(), &display_count);
+            for (uint32_t i = 0; i < display_count; ++i) {
+                if (!CGDisplayIsBuiltin(displays[i])) {
+                    has_external = true;
+                    break;
+                }
+            }
         }
 
-        // Fallback timeout: kill after N ms if no display events
-        int64_t timeout_ns = static_cast<int64_t>(cfg->display_timeout_ms) * NSEC_PER_MSEC;
-        dispatch_after(
-            dispatch_time(DISPATCH_TIME_NOW, timeout_ns),
-            dispatch_get_main_queue(),
-            ^{
-                if (g_pending_kill.exchange(false)) {
+        if (has_external) {
+            // External displays already online - use short delay then kill
+            if (cfg->verbose) {
+                std::cerr << "External displays already online, using short delay (1.5s)...\n";
+            }
+            dispatch_after(
+                dispatch_time(DISPATCH_TIME_NOW, 1500 * NSEC_PER_MSEC),
+                dispatch_get_main_queue(),
+                ^{
                     if (cfg->verbose) {
-                        std::cerr << "Timeout reached, killing extension\n";
+                        std::cerr << "Short delay complete, killing extension\n";
                     }
                     do_kill_with_force(*cfg);
                 }
+            );
+        } else {
+            // No external displays yet - wait for callback or timeout
+            g_pending_kill = true;
+            if (cfg->verbose) {
+                std::cerr << "Waiting for external displays to enable (timeout: " << cfg->display_timeout_ms << "ms)...\n";
             }
-        );
+
+            // Fallback timeout: kill after N ms if no display events
+            int64_t timeout_ns = static_cast<int64_t>(cfg->display_timeout_ms) * NSEC_PER_MSEC;
+            dispatch_after(
+                dispatch_time(DISPATCH_TIME_NOW, timeout_ns),
+                dispatch_get_main_queue(),
+                ^{
+                    if (g_pending_kill.exchange(false)) {
+                        if (cfg->verbose) {
+                            std::cerr << "Timeout reached, killing extension\n";
+                        }
+                        do_kill_with_force(*cfg);
+                    }
+                }
+            );
+        }
     } else {
         // Original immediate kill behavior
         do_kill_with_force(*cfg);
