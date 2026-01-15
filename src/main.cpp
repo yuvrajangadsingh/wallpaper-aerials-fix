@@ -164,10 +164,10 @@ void system_event_callback(CFNotificationCenterRef /*center*/, void *observer, C
         if (has_external) {
             // External displays already online - use short delay then kill
             if (cfg->verbose) {
-                std::cerr << "External displays already online, using short delay (1.5s)...\n";
+                std::cerr << "External displays already online, using short delay (300ms)...\n";
             }
             dispatch_after(
-                dispatch_time(DISPATCH_TIME_NOW, 1500 * NSEC_PER_MSEC),
+                dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC),
                 dispatch_get_main_queue(),
                 ^{
                     if (cfg->verbose) {
