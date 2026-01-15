@@ -83,6 +83,20 @@ Force kill if it doesn't exit (use with care):
 ./build/wallpaper-aerials-fix --force-after-ms 500 --force-signal KILL
 ```
 
+### Multi-monitor setup (recommended for external displays)
+
+If you have external monitors that show black wallpaper after waking from sleep, use the `--wait-for-displays` flag. This waits for external displays to report as "ready" before killing the extension:
+
+```bash
+./build/wallpaper-aerials-fix --wait-for-displays --verbose
+```
+
+With custom timeout (default is 5000ms):
+
+```bash
+./build/wallpaper-aerials-fix --wait-for-displays --display-timeout-ms 3000 --verbose
+```
+
 ## Run at login (LaunchAgent)
 
 1) Build the binary.

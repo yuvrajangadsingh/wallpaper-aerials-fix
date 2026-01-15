@@ -1,8 +1,11 @@
 #include <CoreFoundation/CoreFoundation.h>
+#include <CoreGraphics/CoreGraphics.h>
+#include <dispatch/dispatch.h>
 #include <libproc.h>
 #include <signal.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cerrno>
 #include <cstring>
 #include <iostream>
@@ -18,7 +21,13 @@ struct Config {
     int primary_signal = SIGTERM;
     int force_signal = SIGKILL;
     int force_after_ms = 0;
+    bool wait_for_displays = false;   // Wait for external display events before killing
+    int display_timeout_ms = 5000;    // Fallback timeout for display wait
 };
+
+// Global state for display callback coordination
+static std::atomic<bool> g_pending_kill{false};
+static Config* g_config_ptr = nullptr;
 
 const char *signal_name(int sig) {
     switch (sig) {
@@ -42,6 +51,8 @@ void print_usage(const char *argv0) {
         << "  --signal <TERM|KILL>       Primary signal. Default: TERM\n"
         << "  --force-after-ms <ms>      If >0, send --force-signal after this delay. Default: 0 (disabled)\n"
         << "  --force-signal <KILL|TERM> Force signal. Default: KILL\n"
+        << "  --wait-for-displays        Wait for external displays to be ready before killing (multi-monitor fix)\n"
+        << "  --display-timeout-ms <ms>  Fallback timeout when waiting for displays. Default: 5000\n"
         << "  --verbose                  Print actions to stderr\n"
         << "  -h, --help                 Show help\n";
 }
@@ -93,6 +104,31 @@ bool kill_targets(const Config &cfg, int sig) {
     return any_signaled;
 }
 
+void do_kill_with_force(const Config &cfg) {
+    bool any = kill_targets(cfg, cfg.primary_signal);
+    if (any && cfg.force_after_ms > 0) {
+        usleep(static_cast<useconds_t>(cfg.force_after_ms) * 1000);
+        kill_targets(cfg, cfg.force_signal);
+    }
+}
+
+void display_reconfig_callback(CGDirectDisplayID display,
+                               CGDisplayChangeSummaryFlags flags,
+                               void * /*userInfo*/) {
+    if (!g_config_ptr) return;
+    const Config &cfg = *g_config_ptr;
+
+    // When external display becomes enabled, check if we should kill
+    if (!CGDisplayIsBuiltin(display) && (flags & kCGDisplayEnabledFlag)) {
+        if (g_pending_kill.exchange(false)) {
+            if (cfg.verbose) {
+                std::cerr << "External display enabled (ID: " << display << "), killing extension now\n";
+            }
+            do_kill_with_force(cfg);
+        }
+    }
+}
+
 void system_event_callback(CFNotificationCenterRef /*center*/, void *observer, CFStringRef name, const void * /*object*/,
                            CFDictionaryRef /*userInfo*/) {
     auto *cfg = static_cast<Config *>(observer);
@@ -105,10 +141,34 @@ void system_event_callback(CFNotificationCenterRef /*center*/, void *observer, C
         return;
     }
 
-    bool any = kill_targets(*cfg, cfg->primary_signal);
-    if (any && cfg->force_after_ms > 0) {
-        usleep(static_cast<useconds_t>(cfg->force_after_ms) * 1000);
-        kill_targets(*cfg, cfg->force_signal);
+    if (cfg->verbose) {
+        std::cerr << (is_unlock ? "unlock" : "lock") << " detected\n";
+    }
+
+    if (cfg->wait_for_displays) {
+        // Set pending kill flag - display callback or timeout will trigger the actual kill
+        g_pending_kill = true;
+        if (cfg->verbose) {
+            std::cerr << "Waiting for external displays to enable (timeout: " << cfg->display_timeout_ms << "ms)...\n";
+        }
+
+        // Fallback timeout: kill after N ms if no display events
+        int64_t timeout_ns = static_cast<int64_t>(cfg->display_timeout_ms) * NSEC_PER_MSEC;
+        dispatch_after(
+            dispatch_time(DISPATCH_TIME_NOW, timeout_ns),
+            dispatch_get_main_queue(),
+            ^{
+                if (g_pending_kill.exchange(false)) {
+                    if (cfg->verbose) {
+                        std::cerr << "Timeout reached, killing extension\n";
+                    }
+                    do_kill_with_force(*cfg);
+                }
+            }
+        );
+    } else {
+        // Original immediate kill behavior
+        do_kill_with_force(*cfg);
     }
 }
 
@@ -181,11 +241,23 @@ int main(int argc, char **argv) {
             if (cfg.force_after_ms < 0) cfg.force_after_ms = 0;
             continue;
         }
+        if (arg == "--wait-for-displays") {
+            cfg.wait_for_displays = true;
+            continue;
+        }
+        if (arg == "--display-timeout-ms" && i + 1 < argc) {
+            cfg.display_timeout_ms = std::stoi(argv[++i]);
+            if (cfg.display_timeout_ms < 0) cfg.display_timeout_ms = 0;
+            continue;
+        }
 
         std::cerr << "Unknown argument: " << arg << "\n";
         print_usage(argv[0]);
         return 2;
     }
+
+    // Set global config pointer for display callback
+    g_config_ptr = &cfg;
 
     CFNotificationCenterRef center = CFNotificationCenterGetDistributedCenter();
     if (!center) {
@@ -198,8 +270,20 @@ int main(int argc, char **argv) {
     CFNotificationCenterAddObserver(center, &cfg, system_event_callback, event_name, nullptr,
                                     CFNotificationSuspensionBehaviorDeliverImmediately);
 
+    // Register display reconfiguration callback if waiting for displays
+    if (cfg.wait_for_displays) {
+        CGDisplayRegisterReconfigurationCallback(display_reconfig_callback, &cfg);
+        if (cfg.verbose) {
+            std::cerr << "Registered display reconfiguration callback\n";
+        }
+    }
+
     if (cfg.verbose) {
-        std::cerr << "Listening for " << (cfg.kill_on_unlock ? "unlock" : "lock") << " events...\n";
+        std::cerr << "Listening for " << (cfg.kill_on_unlock ? "unlock" : "lock") << " events";
+        if (cfg.wait_for_displays) {
+            std::cerr << " (will wait for external displays)";
+        }
+        std::cerr << "...\n";
     }
 
     CFRunLoopRun();
